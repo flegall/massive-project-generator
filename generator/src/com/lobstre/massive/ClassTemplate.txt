@@ -1,0 +1,226 @@
+package PACKAGE_NAME;
+
+
+import java.lang.annotation.Annotation;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+
+public class CLASS_NAME {
+
+
+	/**
+     * Method creating a chain of responsibility.
+     * 
+     * @param chainItf
+     *            The chain interface definition.
+     * @param filterItf
+     *            The filter interface definition.
+     * @param filters
+     *            A list a filters (null is supported) to invoke after the first
+     *            filter and before the last filter.
+     * @return An object implementing the chain interface.
+     */
+    public static <C,F> C create (final Class<C> chainItf, final Class<F> filterItf, final Collection<F> filters) {
+        return chainItf.cast (Proxy.newProxyInstance (chainItf.getClassLoader (), new Class[] { chainItf }, new Chain<C,F> (filterItf, chainItf, filters)));
+    }
+    
+	/**
+	 * Transform an array of objects array into a Map : iterates on the array, and takes the sub-array 
+	 * first element as key and the sub-array second element as value. 
+	 * 
+	 * Example : 
+	 * final Map<Integer, String> mapping = ArrayUtils.asMap (new Object [][] {
+	 *     { 1, "one"},
+	 *     { 2, "two"},
+	 *     { 3, "three"}, 
+	 * });
+	 * 
+	 * @return Map
+	 *        Map containing the key/values
+	 * @param in
+	 *        the input array (Object [][])
+	 */
+	@SuppressWarnings("unchecked")
+    public static <K, V> Map<K, V> asMap (final Object [][] in) {
+	    final Map<K, V> ret = new LinkedHashMap <K, V> (in.length);
+	    
+	    for (Object[] keyValue : in) {
+	        ret.put ((K)keyValue[0], (V)keyValue[1]);
+	    }
+
+	    return Collections.unmodifiableMap (ret);
+	}
+
+    /**
+     * Indicates that a method declaration in the filter does not need to be
+     * replicated in the chain interface because it makes no sense to call it
+     * from the chain.
+     */
+    @Target(ElementType.METHOD)
+    @Retention(RetentionPolicy.RUNTIME)
+    public @interface NotChainable {
+    }
+
+    private static class Chain<C, F> implements InvocationHandler {
+        private Chain (final Class<F> filterItf, final Class<C> chainItf, final Collection<F> filters) {
+            this.chainFilterMapping = new HashMap<Method, Object[]> ();
+            this.filters = new ArrayList<F> ();
+            this.filters.addAll (filters);
+    
+            final Set<Method> methods = new HashSet<Method> (Arrays.asList (chainItf.getDeclaredMethods ()));
+            
+            // for each filter method, get the corresponding chain's method
+            final Method[] fm = filterItf.getDeclaredMethods ();
+            for (int i = 0; i < fm.length; i++) {
+                if (hasAnnotation (NotChainable.class, fm[i].getDeclaredAnnotations ())) {
+                    continue;
+                }
+                final Class<?>[] fmp = fm[i].getParameterTypes ();
+                checkTrue (fmp.length > 0 && fmp[0].equals (chainItf), "filter method signatures must match (" + chainItf.getClass ().getName () + " chain [, ArgType arg]*)");
+            
+                // get the corresponding chain's method
+                final Class<?>[] cmp = new Class[fmp.length - 1];
+                System.arraycopy (fmp, 1, cmp, 0, cmp.length);
+                final Method cm = getMethod (chainItf, fm[i].getName (), cmp);
+            
+                checkTrue (cm.getReturnType ().equals (fm[i].getReturnType ()), "return types must match for methods " + cm + " and " + fm[i]);
+            
+                chainFilterMapping.put (cm, new Object[] { fm[i], new Integer (fmp.length) });
+                methods.remove (cm);
+            }
+        }
+    
+        private boolean hasAnnotation (final Class<? extends Annotation> annotation, final Annotation[] annotations) {
+            for (final Annotation a : annotations) {
+                final Class<? extends Annotation> annotationType = a.annotationType ();
+                if (annotationType.equals (annotation)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private Method getMethod (final Class<?> clazz, final String name, final Class<?>[] cmp) {
+            try {
+                return clazz.getMethod (name, cmp);
+            } catch (final SecurityException e) {
+                throw new RuntimeException (e);
+            } catch (final NoSuchMethodException e) {
+                throw new RuntimeException (e);
+            }
+        }
+    
+        private void checkTrue (final boolean expectedTrue, final String message) {
+            if (!expectedTrue) {
+                throw new RuntimeException (message);
+            }
+        }
+    
+        public Object invoke (final Object proxy, final Method method, final Object[] args) throws Throwable {
+            State state = threadLocalState.get ();
+            // if state is not null, we're in a chain invocation
+            if (state != null && state.chainMethod.equals (method) == false) {
+                throw new RuntimeException ("can't call " + method + " within " + state.chainMethod);
+            }
+    
+            boolean toplevelinvoke = false;
+            if (state == null) {
+                state = new State (method);
+                threadLocalState.set (state);
+                toplevelinvoke = true;
+            }
+    
+            try {
+                return state.invokeNextFilter (proxy, args);
+            } finally {
+                if (toplevelinvoke) {
+                    threadLocalState.remove ();
+                }
+            }
+        }
+    
+        private static Map<Class<?>, Object> DEFAULTS = asMap (new Object[][] { 
+                { boolean.class, Boolean.FALSE }, 
+                { byte.class, new Byte ((byte) 0) },
+                { char.class, new Character ((char) 0) }, 
+                { short.class, new Short ((short) 0) }, 
+                { int.class, new Integer (0) }, 
+                { long.class, new Long (0) }, 
+                { float.class, new Float (0.0f) },
+                { double.class, new Double (0.0) }, 
+                { void.class, null } });
+    
+        private class State {
+            private State (final Method chainMethod) {
+                this.chainMethod = chainMethod;
+                this.filters = new ArrayList<F> ();
+                this.cursor = 0;
+                this.defaultReturnValue = DEFAULTS.get (chainMethod.getReturnType ());
+    
+                filters.addAll (Chain.this.filters);
+    
+                // get the filter method
+                final Object[] m = chainFilterMapping.get (chainMethod);
+                checkTrue (m != null, chainMethod.getName () + " is not implemented");
+    
+                filterMethod = (Method) m[0];
+                final Integer argc = (Integer) m[1];
+                argv = new Object[argc.intValue ()];
+            }
+    
+            private Object invokeNextFilter (final Object chain, final Object[] args) {
+                if (cursor == filters.size ()) {
+                    return defaultReturnValue;
+                }
+    
+                argv[0] = chain;
+                if (args != null) {
+                    System.arraycopy (args, 0, argv, 1, args.length);
+                }
+    
+                try {
+                    return filterMethod.invoke (filters.get (cursor++), argv);
+                } catch (final IllegalArgumentException e) {
+                    throw new RuntimeException (e);
+                } catch (final IllegalAccessException e) {
+                    throw new RuntimeException (e);
+                } catch (final InvocationTargetException e) {
+                    throw new RuntimeException (e);
+                }
+            }
+    
+            private final List<F> filters;
+    
+            private final Method chainMethod, filterMethod;
+    
+            private int cursor;
+    
+            private final Object[] argv;
+    
+            private final Object defaultReturnValue;
+        }
+        
+        private final ThreadLocal<State> threadLocalState = new ThreadLocal<State> ();
+    
+        private final List<F> filters;
+    
+        private final Map<Method, Object[]> chainFilterMapping;
+    }
+}
