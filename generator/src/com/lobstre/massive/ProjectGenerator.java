@@ -120,21 +120,40 @@ public class ProjectGenerator {
 						fos = new FileOutputStream (javaFile);
 						copy (resource, fos);
 					} finally {
-						if (resource != null) {
-							try {
-								resource.close();
-							} finally {
-								if (fos != null) {
-									fos.close();
-								}
-							}
-						}
+						handleFinally(resource, fos);
 						
 					}
 					rewrite (javaFile, ProjectGenerator.<String, String>asMap(new Object[][] {
 							{"CLASS_NAME", className},
 							{"PACKAGE_NAME", "com.company.product."+packageName + "." +subPackageName},
 					}));
+				}
+			}
+		}
+		
+		final ClassLoader cl = ProjectGenerator.class.getClassLoader();
+		InputStream resource = null;
+		FileOutputStream fos = null;
+		File javaFile = new File (projectDir, ".project");
+		
+		try {
+			resource = cl.getResourceAsStream("com/lobstre/massive/project.txt");
+			fos = new FileOutputStream(javaFile);
+			copy(resource, fos);
+		} finally {
+			handleFinally(resource, fos);
+		}
+		
+	}
+
+	private static void handleFinally(InputStream resource,
+			FileOutputStream fos) throws IOException {
+		if (resource != null) {
+			try {
+				resource.close();
+			} finally {
+				if (fos != null) {
+					fos.close();
 				}
 			}
 		}
