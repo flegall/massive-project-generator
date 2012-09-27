@@ -134,15 +134,18 @@ public class ProjectGenerator {
 		final ClassLoader cl = ProjectGenerator.class.getClassLoader();
 		InputStream resource = null;
 		FileOutputStream fos = null;
-		File javaFile = new File (projectDir, ".project");
+		File projectFile = new File (projectDir, ".project");
 		
 		try {
 			resource = cl.getResourceAsStream("com/lobstre/massive/project.txt");
-			fos = new FileOutputStream(javaFile);
+			fos = new FileOutputStream(projectFile);
 			copy(resource, fos);
 		} finally {
 			handleFinally(resource, fos);
 		}
+		rewrite (projectFile, ProjectGenerator.<String, String>asMap(new Object[][] {
+				{"PROJECT_NAME", projectName},
+		}));				
 		
 	}
 
