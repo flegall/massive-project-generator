@@ -75,7 +75,7 @@ public class ProjectGenerator {
 				@Override
 				public void run() {
 					try {
-						generateProject(iFinal, workspacedir);
+						generateProject(workspacedir, iFinal);
 						System.out.println("Done #" + iFinal +" : " + counter.incrementAndGet()+  " / " + projectCount);
 					} catch (Throwable t) {
 						t.printStackTrace();
@@ -83,6 +83,20 @@ public class ProjectGenerator {
 				}
 			});
 		}
+		
+		// Writing project file
+		final ClassLoader cl = ProjectGenerator.class.getClassLoader();
+		InputStream resource = null;
+		FileOutputStream fos = null;
+		File projectFile = new File (workspacedir, ".hgignore");
+		try {
+			resource = cl.getResourceAsStream("com/lobstre/massive/hgignore.txt");
+			fos = new FileOutputStream(projectFile);
+			copy(resource, fos);
+		} finally {
+			close(resource, fos);
+		}
+		
 		// Shutdown worker.
 		es.shutdown ();
 		try {
@@ -92,64 +106,106 @@ public class ProjectGenerator {
 		}
 	}
 
-	private static void generateProject(int projectNumber, File rootDir) throws IOException {
+	private static void generateProject (File rootDir, int projectNumber) throws IOException {
 		final DecimalFormat df = new DecimalFormat("0000");
-		final String projectName = "project_" + df.format(projectNumber);
+		final String projectName = makeProjectName(projectNumber, df);
+		
+		// Making all subdirs
 		final File projectDir = makeSubDir(rootDir, projectName);
 		final File srcDir = makeSubDir(projectDir, "src");
 		final File comDir = makeSubDir(srcDir, "com");
 		final File companyDir = makeSubDir(comDir, "company");
 		final File productDir = makeSubDir(companyDir, "product");
 		final File projectPackageDir = makeSubDir(productDir, projectName);
+		
+		// Making packages subdirs & classes
 		for (int i = 0; i < 10; i++) {
 			final String packageName = "package" + i;
 			final File packageDir = makeSubDir(projectPackageDir, packageName);
 			for (int j = 0; j < 10; j++) {
 				final String subPackageName = "subpackage" + j;
 				final File subPackageDir = makeSubDir(packageDir, subPackageName);
+				// Writing all classes
 				for (int k = 0; k < 10; k++) {
-					InputStream resource = null;
-					FileOutputStream fos = null;
-					File javaFile = null;
-					final String className = "UberClass_" + projectName + df.format(i) + df.format(j) + df.format(k);
-					try {
-						final ClassLoader cl = ProjectGenerator.class.getClassLoader();
-						resource = cl.getResourceAsStream("com/lobstre/massive/ClassTemplate.txt");
-						final String fileName = className + ".java";
-						javaFile = new File (subPackageDir, fileName);
-						fos = new FileOutputStream (javaFile);
-						copy (resource, fos);
-					} finally {
-						handleFinally(resource, fos);
-						
-					}
-					rewrite (javaFile, ProjectGenerator.<String, String>asMap(new Object[][] {
-							{"CLASS_NAME", className},
-							{"PACKAGE_NAME", "com.company.product."+packageName + "." +subPackageName},
-					}));
+					writeJavaClass(df, projectName, i, packageName, j, subPackageName, subPackageDir, k);
 				}
 			}
 		}
 		
+		// Writing project file
 		final ClassLoader cl = ProjectGenerator.class.getClassLoader();
 		InputStream resource = null;
 		FileOutputStream fos = null;
 		File projectFile = new File (projectDir, ".project");
-		
 		try {
 			resource = cl.getResourceAsStream("com/lobstre/massive/project.txt");
 			fos = new FileOutputStream(projectFile);
 			copy(resource, fos);
 		} finally {
-			handleFinally(resource, fos);
+			close(resource, fos);
 		}
 		rewrite (projectFile, ProjectGenerator.<String, String>asMap(new Object[][] {
 				{"PROJECT_NAME", projectName},
-		}));				
+		}));
 		
+		// Writing classpath file
+		resource = null;
+		fos = null;
+		File classPathFile = new File (projectDir, ".classpath");
+		try {
+			resource = cl.getResourceAsStream("com/lobstre/massive/classpath.txt");
+			fos = new FileOutputStream(classPathFile);
+			copy(resource, fos);
+		} finally {
+			close(resource, fos);
+		}
+		rewrite (classPathFile, ProjectGenerator.<String, String>asMap(new Object[][] {
+				{"CLASSPATH_DEPS", makeDeps (projectNumber, df)},
+		}));
 	}
 
-	private static void handleFinally(InputStream resource,
+	private static String makeProjectName(int projectNumber,
+			final DecimalFormat df) {
+		return "project_" + df.format(projectNumber);
+	}
+
+	private static String makeDeps(int projectNumber, DecimalFormat df) {
+		final StringBuilder sb = new StringBuilder();
+		for (int i = 0; i < projectNumber; i++) {
+			sb.append ("	<classpathentry combineaccessrules=\"false\" kind=\"src\" path=\"/" +
+					makeProjectName(i, df) +
+					"\"/>");
+			sb.append("\n");
+		}
+		return sb.toString();
+	}
+
+	private static void writeJavaClass(final DecimalFormat df,
+			final String projectName, int i, final String packageName, int j,
+			final String subPackageName, final File subPackageDir, int k)
+			throws FileNotFoundException, IOException {
+		InputStream resource = null;
+		FileOutputStream fos = null;
+		File javaFile = null;
+		final String className = "UberClass_" + projectName + df.format(i) + df.format(j) + df.format(k);
+		try {
+			final ClassLoader cl = ProjectGenerator.class.getClassLoader();
+			resource = cl.getResourceAsStream("com/lobstre/massive/ClassTemplate.txt");
+			final String fileName = className + ".java";
+			javaFile = new File (subPackageDir, fileName);
+			fos = new FileOutputStream (javaFile);
+			copy (resource, fos);
+		} finally {
+			close(resource, fos);
+			
+		}
+		rewrite (javaFile, ProjectGenerator.<String, String>asMap(new Object[][] {
+				{"CLASS_NAME", className},
+				{"PACKAGE_NAME", "com.company.product."+projectName+"."+packageName + "." +subPackageName},
+		}));
+	}
+
+	private static void close(InputStream resource,
 			FileOutputStream fos) throws IOException {
 		if (resource != null) {
 			try {
